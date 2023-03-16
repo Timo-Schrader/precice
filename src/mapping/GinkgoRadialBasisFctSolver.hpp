@@ -405,15 +405,15 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
     //                           .with_criteria(iterationCriterion, residualCriterion)
     //                           .on(_deviceExecutor);
     //
-    //  _gmresSolver = gko::share(solverFactory->generate(rbfSys));
+    //  _gmresSolver = gko::share(solverFactory->generate(RBFSystemMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, dInputVertices, dOutputVertices, &basisFunction)));
     //  _gmresSolver->add_logger(_logger);
     //} else {
-    //  auto solverFactory = gmres::build()
-    //                           .with_criteria(iterationCriterion, residualCriterion)
-    //                           .on(_deviceExecutor);
-    //
-    //  _gmresSolver = gko::share(solverFactory->generate(rbfSys));
-    //  _gmresSolver->add_logger(_logger);
+    auto solverFactory = gmres::build()
+                             .with_criteria(iterationCriterion, residualCriterion)
+                             .on(_deviceExecutor);
+
+    _gmresSolver = gko::share(solverFactory->generate(RBFSystemMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, dInputVertices, dOutputVertices, &basisFunction)));
+    //_gmresSolver->add_logger(_logger);
     //}
   }
 }
