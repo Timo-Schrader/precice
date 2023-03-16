@@ -7,6 +7,7 @@
 #include <ginkgo/ginkgo.hpp>
 #include <ginkgo/kernels/kernel_declaration.hpp>
 #include <numeric>
+#include "mapping/RBFSystemMatrix.hpp"
 #include "mapping/config/MappingConfiguration.hpp"
 #include "mapping/impl/BasisFunctions.hpp"
 #include "mesh/Mesh.hpp"
@@ -178,6 +179,9 @@ private:
   precice::utils::Event _assemblyEvent{"map.rbf.ginkgo.assembleMatrices", false, false};
 
   std::shared_ptr<gko::log::Convergence<>> _logger;
+
+  std::shared_ptr<GinkgoVector> dInputVertices;
+  std::shared_ptr<GinkgoVector> dOutputVertices;
 };
 
 template <typename RADIAL_BASIS_FUNCTION_T>
@@ -271,15 +275,15 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
 
   _allocCopyEvent.start();
 
-  auto dInputVertices  = gko::clone(_deviceExecutor, inputVertices);
-  auto dOutputVertices = gko::clone(_deviceExecutor, outputVertices);
+  dInputVertices  = gko::share(gko::clone(_deviceExecutor, inputVertices));
+  dOutputVertices = gko::share(gko::clone(_deviceExecutor, outputVertices));
   inputVertices->clear();
   outputVertices->clear();
 
   _deviceExecutor->synchronize();
 
-  _rbfSystemMatrix = gko::share(GinkgoMatrix::create(_deviceExecutor, gko::dim<2>{n, n}));
-  _matrixA         = gko::share(GinkgoMatrix::create(_deviceExecutor, gko::dim<2>{outputSize, n}));
+  //_rbfSystemMatrix = gko::share(GinkgoMatrix::create(_deviceExecutor, gko::dim<2>{n, n}));
+  _matrixA = gko::share(GinkgoMatrix::create(_deviceExecutor, gko::dim<2>{outputSize, n}));
 
   _allocCopyEvent.pause();
 
@@ -321,11 +325,11 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
   }
 
   // Launch RBF fill kernel on device
-  _assemblyEvent.start();
-  precice::utils::Event systemMatrixAssemblyEvent{"map.rbf.ginkgo.assembleSystemMatrix", false};
-  _deviceExecutor->run(make_rbf_fill_operation(_rbfSystemMatrix->get_size()[0], _rbfSystemMatrix->get_size()[1], meshDim, activeAxis, _rbfSystemMatrix->get_values(), dInputVertices->get_values(), dInputVertices->get_values(), basisFunction, basisFunction.getFunctionParameters(), dInputVertices->get_size()[1], dInputVertices->get_size()[1], Polynomial::ON == polynomial, polyparams)); // polynomial evaluates to true only if ON is set
-  _deviceExecutor->synchronize();
-  systemMatrixAssemblyEvent.stop();
+  //_assemblyEvent.start();
+  // precice::utils::Event systemMatrixAssemblyEvent{"map.rbf.ginkgo.assembleSystemMatrix", false};
+  //_deviceExecutor->run(make_rbf_fill_operation(_rbfSystemMatrix->get_size()[0], _rbfSystemMatrix->get_size()[1], meshDim, activeAxis, _rbfSystemMatrix->get_values(), dInputVertices->get_values(), dInputVertices->get_values(), basisFunction, basisFunction.getFunctionParameters(), dInputVertices->get_size()[1], dInputVertices->get_size()[1], Polynomial::ON == polynomial, polyparams)); // polynomial evaluates to true only if ON is set
+  //_deviceExecutor->synchronize();
+  // systemMatrixAssemblyEvent.stop();
 
   precice::utils::Event outputMatrixAssemblyEvent{"map.rbf.ginkgo.assembleOutputMatrix", false};
   _deviceExecutor->run(make_rbf_fill_operation(_matrixA->get_size()[0], _matrixA->get_size()[1], meshDim, activeAxis, _matrixA->get_values(), dInputVertices->get_values(), dOutputVertices->get_values(), basisFunction, basisFunction.getFunctionParameters(), dInputVertices->get_size()[1], dOutputVertices->get_size()[1], Polynomial::ON == polynomial, polyparams));
@@ -335,8 +339,8 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
   outputMatrixAssemblyEvent.stop();
   _assemblyEvent.stop();
 
-  dInputVertices->clear();
-  dOutputVertices->clear();
+  // dInputVertices->clear();
+  // dOutputVertices->clear();
 
   auto iterationCriterion = gko::share(gko::stop::Iteration::build()
                                            .with_max_iters(ginkgoParameter.maxIterations)
@@ -349,96 +353,68 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
   iterationCriterion->add_logger(_logger);
   residualCriterion->add_logger(_logger);
 
+  // auto rbfSys = RBFSystemMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, dInputVertices, dOutputVertices, &basisFunction);
+
   if (_solverType == GinkgoSolverType::MG) {
-
-    auto smootherFactory = gko::share(
-        ir::build()
-            .with_solver(jacobi::build().with_max_block_size(1u).on(_deviceExecutor))
-            .with_relaxation_factor(0.9)
-            .with_criteria(
-                gko::stop::Iteration::build().with_max_iters(2u).on(_deviceExecutor))
-            .on(_deviceExecutor));
-
-    auto mgLevelFactory = amgx_pgm::build().with_deterministic(false).on(_deviceExecutor);
-
-    auto coarsestFactory =
-        cg::build()
-            .with_criteria(
-                gko::stop::Iteration::build().with_max_iters(4u).on(_deviceExecutor))
-            .on(_deviceExecutor);
-
-    auto multigridFactory =
-        mg::build()
-            .with_max_levels(2u)
-            .with_min_coarse_rows(2u)
-            .with_pre_smoother(gko::share(smootherFactory))
-            .with_post_uses_pre(true)
-            .with_mg_level(gko::share(mgLevelFactory))
-            .with_coarsest_solver(
-                gko::share(jacobi::build().with_max_block_size(1u).on(_deviceExecutor)))
-            .with_criteria(residualCriterion)
-            .on(_deviceExecutor);
-
-    _mgSolver = gko::share(multigridFactory->generate(_rbfSystemMatrix));
-    _mgSolver->add_logger(_logger);
 
   } else if (_solverType == GinkgoSolverType::CG) {
 
-    if (GinkgoPreconditionerType::None != _preconditionerType && ginkgoParameter.usePreconditioner) {
-      auto solverFactoryWithPreconditioner = [preconditionerType = _preconditionerType, executor = _deviceExecutor, &ginkgoParameter]() {
-        if (preconditionerType == GinkgoPreconditionerType::Jacobi) {
-          return cg::build().with_preconditioner(jacobi::build().with_max_block_size(ginkgoParameter.jacobiBlockSize).on(executor));
-        } else if (preconditionerType == GinkgoPreconditionerType::Cholesky) {
-          return cg::build().with_preconditioner(cholesky::build().on(executor));
-        } else {
-          return cg::build().with_preconditioner(ilu::build().on(executor));
-        }
-      }();
+    // if (GinkgoPreconditionerType::None != _preconditionerType && ginkgoParameter.usePreconditioner) {
+    //   auto solverFactoryWithPreconditioner = [preconditionerType = _preconditionerType, executor = _deviceExecutor, &ginkgoParameter]() {
+    //     if (preconditionerType == GinkgoPreconditionerType::Jacobi) {
+    //       return cg::build().with_preconditioner(jacobi::build().with_max_block_size(ginkgoParameter.jacobiBlockSize).on(executor));
+    //     } else if (preconditionerType == GinkgoPreconditionerType::Cholesky) {
+    //       return cg::build().with_preconditioner(cholesky::build().on(executor));
+    //     } else {
+    //       return cg::build().with_preconditioner(ilu::build().on(executor));
+    //     }
+    //   }();
+    //
+    //  auto solverFactory = solverFactoryWithPreconditioner
+    //                           .with_criteria(iterationCriterion, residualCriterion)
+    //                           .on(_deviceExecutor);
+    //
+    //  //_cgSolver = gko::share(solverFactory->generate(rbfSys));
+    //  _cgSolver->add_logger(_logger);
+    //}
 
-      auto solverFactory = solverFactoryWithPreconditioner
+    // else
+    //{
+    _cgSolver = gko::share(cg::build()
                                .with_criteria(iterationCriterion, residualCriterion)
-                               .on(_deviceExecutor);
+                               .on(_deviceExecutor)
+                               ->generate(RBFSystemMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, dInputVertices, dOutputVertices, &basisFunction)));
 
-      _cgSolver = gko::share(solverFactory->generate(_rbfSystemMatrix));
-      _cgSolver->add_logger(_logger);
-    }
-
-    else {
-      auto solverFactory = cg::build()
-                               .with_criteria(iterationCriterion, residualCriterion)
-                               .on(_deviceExecutor);
-
-      _cgSolver = gko::share(solverFactory->generate(_rbfSystemMatrix));
-      _cgSolver->add_logger(_logger);
-    }
-
+    //_cgSolver = gko::share(solverFactory->generate(rbfSys));
+    //_cgSolver->add_logger(_logger);
+    //}
   } else if (_solverType == GinkgoSolverType::GMRES) {
 
-    if (GinkgoPreconditionerType::None != _preconditionerType && ginkgoParameter.usePreconditioner) {
-      auto solverFactoryWithPreconditioner = [preconditionerType = _preconditionerType, executor = _deviceExecutor, &ginkgoParameter]() {
-        if (preconditionerType == GinkgoPreconditionerType::Jacobi) {
-          return gmres::build().with_preconditioner(jacobi::build().with_max_block_size(ginkgoParameter.jacobiBlockSize).on(executor));
-        } else if (preconditionerType == GinkgoPreconditionerType::Cholesky) {
-          return gmres::build().with_preconditioner(cholesky::build().on(executor));
-        } else {
-          return gmres::build().with_preconditioner(ilu::build().on(executor));
-        }
-      }();
-
-      auto solverFactory = solverFactoryWithPreconditioner
-                               .with_criteria(iterationCriterion, residualCriterion)
-                               .on(_deviceExecutor);
-
-      _gmresSolver = gko::share(solverFactory->generate(_rbfSystemMatrix));
-      _gmresSolver->add_logger(_logger);
-    } else {
-      auto solverFactory = gmres::build()
-                               .with_criteria(iterationCriterion, residualCriterion)
-                               .on(_deviceExecutor);
-
-      _gmresSolver = gko::share(solverFactory->generate(_rbfSystemMatrix));
-      _gmresSolver->add_logger(_logger);
-    }
+    // if (GinkgoPreconditionerType::None != _preconditionerType && ginkgoParameter.usePreconditioner) {
+    //   auto solverFactoryWithPreconditioner = [preconditionerType = _preconditionerType, executor = _deviceExecutor, &ginkgoParameter]() {
+    //     if (preconditionerType == GinkgoPreconditionerType::Jacobi) {
+    //       return gmres::build().with_preconditioner(jacobi::build().with_max_block_size(ginkgoParameter.jacobiBlockSize).on(executor));
+    //     } else if (preconditionerType == GinkgoPreconditionerType::Cholesky) {
+    //       return gmres::build().with_preconditioner(cholesky::build().on(executor));
+    //     } else {
+    //       return gmres::build().with_preconditioner(ilu::build().on(executor));
+    //     }
+    //   }();
+    //
+    //  auto solverFactory = solverFactoryWithPreconditioner
+    //                           .with_criteria(iterationCriterion, residualCriterion)
+    //                           .on(_deviceExecutor);
+    //
+    //  _gmresSolver = gko::share(solverFactory->generate(rbfSys));
+    //  _gmresSolver->add_logger(_logger);
+    //} else {
+    //  auto solverFactory = gmres::build()
+    //                           .with_criteria(iterationCriterion, residualCriterion)
+    //                           .on(_deviceExecutor);
+    //
+    //  _gmresSolver = gko::share(solverFactory->generate(rbfSys));
+    //  _gmresSolver->add_logger(_logger);
+    //}
   }
 }
 
@@ -454,16 +430,16 @@ void GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::_solveRBFSystem(const 
     _mgSolver->apply(gko::lend(rhs), gko::lend(_rbfCoefficients));
   }
   solverEvent.stop();
-  PRECICE_INFO("The iterative solver stopped after {} iterations.", _logger->get_num_iterations());
+  // PRECICE_INFO("The iterative solver stopped after {} iterations.", _logger->get_num_iterations());
 
 // Only compute time-consuming statistics in debug mode
 #ifndef NDEBUG
 
-  auto dResidual = gko::initialize<GinkgoScalar>({0.0}, _deviceExecutor);
-  _rbfSystemMatrix->apply(gko::lend(_scalarOne), gko::lend(_rbfCoefficients), gko::lend(_scalarNegativeOne), gko::lend(rhs));
-  rhs->compute_norm2(gko::lend(dResidual));
-  auto residual = gko::clone(_hostExecutor, dResidual);
-  PRECICE_INFO("Ginkgo Solver Final Residual: {}", residual->at(0, 0));
+  // auto dResidual = gko::initialize<GinkgoScalar>({0.0}, _deviceExecutor);
+  //_rbfSystemMatrix->apply(gko::lend(_scalarOne), gko::lend(_rbfCoefficients), gko::lend(_scalarNegativeOne), gko::lend(rhs));
+  // rhs->compute_norm2(gko::lend(dResidual));
+  // auto residual = gko::clone(_hostExecutor, dResidual);
+  // PRECICE_INFO("Ginkgo Solver Final Residual: {}", residual->at(0, 0));
 
 #endif
 }

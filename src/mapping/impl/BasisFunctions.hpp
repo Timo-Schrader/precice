@@ -189,7 +189,7 @@ public:
   }
 
 private:
-  double const _cPow2;
+  double _cPow2;
 
   RadialBasisParameters _params;
 };
@@ -298,7 +298,7 @@ public:
   static constexpr double cutoffThreshold = 1e-9;
 
 private:
-  double const _shape;
+  double _shape;
 
   /// Either explicitly set (from cutoffThreshold) or computed supportRadius
   double _supportRadius;
