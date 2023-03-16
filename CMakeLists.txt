@@ -412,6 +412,8 @@ if (PRECICE_GinkgoParallelization)
   # This command registers Ginkgo kernels for different execution backends
   ginkgo_add_unified_kernels(preciceCore src/mapping/ginkgo_kernels/GinkgoRBFKernels.cpp)
 
+  target_sources(preciceCore PUBLIC src/mapping/ginkgo_kernels/matrix_free_kernel.cu)
+
   if(OpenMP_FOUND)
     target_compile_options(preciceCore PUBLIC "-fopenmp")
   endif()
