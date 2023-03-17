@@ -40,25 +40,26 @@ using precice::mapping::RadialBasisParameters;
 
 namespace {
 
-
-// a parallel CUDA kernel that computes the application of a 3 point stencil
-template <typename ValueType, typename EvalFunctionType>
+template <typename ValueType, typename EvalFunctionType, unsigned int DefaultBlockSize>
 __global__ void multiply_kernel_impl(std::size_t N,  ValueType *v1,  ValueType *v2,
                                     ValueType* x, ValueType *b, EvalFunctionType f, RadialBasisParameters params,  size_t v1RowLength,  size_t v2RowLength)
 {
 
+    __shared__ ValueType localB[DefaultBlockSize];
+
     auto i = blockIdx.x * blockDim.x + threadIdx.x;
+    auto localIdx = i % 512;
 
     if(i < N){
-        double dist = 0;
-        double y;
+        ValueType dist = 0;
+        ValueType y;
 
-        b[i] = 0;
+        localB[localIdx] = 0;
 
-        double prefetchedEvalPoint[3];
+        ValueType prefetchedEvalPoint[3];
 
-        prefetchedEvalPoint[0] = v1[0 * v1RowLength + i];
-        prefetchedEvalPoint[1] = v1[1 * v1RowLength + i];
+        prefetchedEvalPoint[0] = v1[i];
+        prefetchedEvalPoint[1] = v1[v1RowLength + i];
         prefetchedEvalPoint[2] = v1[2 * v1RowLength + i];
 
         for(size_t j = 0; j < v2RowLength; ++j){
@@ -68,8 +69,10 @@ __global__ void multiply_kernel_impl(std::size_t N,  ValueType *v1,  ValueType *
                 dist = fma(y, y, dist);
             }
 
-            b[i] +=  f(sqrt(dist), params) * x[j];
+            localB[localIdx] +=  f(sqrt(dist), params) * x[j];
         }
+
+        b[i] = localB[localIdx];
     }
 }
 
@@ -81,9 +84,9 @@ template <typename ValueType, typename EvalFunctionType>
 void multiply_kernel(std::size_t size,  ValueType *v1,  ValueType *v2,
     ValueType* x, ValueType *b, EvalFunctionType f, RadialBasisParameters params, std::size_t v1RowLength, std::size_t v2RowLength)
 {
-    constexpr int block_size = 512;
-    auto grid_size = (size + block_size - 1) / block_size;
-    multiply_kernel_impl<<<grid_size, block_size>>>(size, v1, v2, x, b, f, params, v1RowLength, v2RowLength);
+    constexpr unsigned int blockSize = 512;
+    auto gridSize = (size + blockSize - 1) / blockSize;
+    multiply_kernel_impl<ValueType, EvalFunctionType, blockSize><<<gridSize, blockSize>>>(size, v1, v2, x, b, f, params, v1RowLength, v2RowLength);
 }
 
 
