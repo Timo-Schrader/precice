@@ -7,7 +7,7 @@
 #include <ginkgo/ginkgo.hpp>
 #include <ginkgo/kernels/kernel_declaration.hpp>
 #include <numeric>
-#include "mapping/RBFSystemMatrix.hpp"
+#include "mapping/RBFMatrix.hpp"
 #include "mapping/config/MappingConfiguration.hpp"
 #include "mapping/impl/BasisFunctions.hpp"
 #include "mesh/Mesh.hpp"
@@ -130,6 +130,8 @@ private:
 
   /// Evaluation matrix (output x input)
   std::shared_ptr<GinkgoMatrix> _matrixA;
+
+  std::unique_ptr<RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>> _rbfMatrixA;
 
   /// Polynomial matrix of the input mesh (for separate polynomial)
   std::shared_ptr<GinkgoMatrix> _matrixQ;
@@ -283,7 +285,9 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
   _deviceExecutor->synchronize();
 
   //_rbfSystemMatrix = gko::share(GinkgoMatrix::create(_deviceExecutor, gko::dim<2>{n, n}));
-  _matrixA = gko::share(GinkgoMatrix::create(_deviceExecutor, gko::dim<2>{outputSize, n}));
+  _matrixA = gko::share(GinkgoMatrix::create(_hostExecutor, gko::dim<2>{outputSize, n}));
+
+  _rbfMatrixA = RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, outputSize, n, dOutputVertices, dInputVertices, &basisFunction);
 
   _allocCopyEvent.pause();
 
@@ -353,7 +357,7 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
   iterationCriterion->add_logger(_logger);
   residualCriterion->add_logger(_logger);
 
-  // auto rbfSys = RBFSystemMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, dInputVertices, dOutputVertices, &basisFunction);
+  // auto rbfSys = RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, dInputVertices, dOutputVertices, &basisFunction);
 
   if (_solverType == GinkgoSolverType::MG) {
 
@@ -383,7 +387,7 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
     _cgSolver = gko::share(cg::build()
                                .with_criteria(iterationCriterion, residualCriterion)
                                .on(_deviceExecutor)
-                               ->generate(RBFSystemMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, dInputVertices, dOutputVertices, &basisFunction)));
+                               ->generate(RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, n, dInputVertices, dInputVertices, &basisFunction)));
 
     //_cgSolver = gko::share(solverFactory->generate(rbfSys));
     //_cgSolver->add_logger(_logger);
@@ -405,14 +409,14 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
     //                           .with_criteria(iterationCriterion, residualCriterion)
     //                           .on(_deviceExecutor);
     //
-    //  _gmresSolver = gko::share(solverFactory->generate(RBFSystemMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, dInputVertices, dOutputVertices, &basisFunction)));
+    //  _gmresSolver = gko::share(solverFactory->generate(RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, dInputVertices, dOutputVertices, &basisFunction)));
     //  _gmresSolver->add_logger(_logger);
     //} else {
     auto solverFactory = gmres::build()
                              .with_criteria(iterationCriterion, residualCriterion)
                              .on(_deviceExecutor);
 
-    _gmresSolver = gko::share(solverFactory->generate(RBFSystemMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, dInputVertices, dOutputVertices, &basisFunction)));
+    _gmresSolver = gko::share(solverFactory->generate(RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, n, dInputVertices, dInputVertices, &basisFunction)));
     //_gmresSolver->add_logger(_logger);
     //}
   }
@@ -481,7 +485,9 @@ Eigen::VectorXd GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::solveConsis
   auto dOutput = gko::share(GinkgoVector::create(_deviceExecutor, gko::dim<2>{_matrixA->get_size()[0], _rbfCoefficients->get_size()[1]}));
   _allocCopyEvent.pause();
 
-  _matrixA->apply(gko::lend(_rbfCoefficients), gko::lend(dOutput));
+  //_matrixA->apply(gko::lend(_rbfCoefficients), gko::lend(dOutput));
+  // std::cout << _rbfMatrixA->get_size()[0] << " " << _rbfMatrixA->get_size()[1] << std::endl;
+  _rbfMatrixA->apply(gko::lend(_rbfCoefficients), gko::lend(dOutput));
 
   if (polynomial == Polynomial::SEPARATE) {
     _matrixV->apply(gko::lend(_polynomialContribution), gko::lend(_addPolynomialContribution));
@@ -516,7 +522,7 @@ std::shared_ptr<gko::Executor> GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_
 template <typename RADIAL_BASIS_FUNCTION_T>
 const std::shared_ptr<GinkgoMatrix> GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::getEvaluationMatrix() const
 {
-  return _matrixA;
+  return _matrixA; // TODO: FIX
 }
 
 template <typename RADIAL_BASIS_FUNCTION_T>
