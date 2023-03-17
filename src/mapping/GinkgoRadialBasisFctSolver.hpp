@@ -482,7 +482,7 @@ Eigen::VectorXd GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::solveConsis
   dRhs->clear();
 
   _allocCopyEvent.start();
-  auto dOutput = gko::share(GinkgoVector::create(_deviceExecutor, gko::dim<2>{_matrixA->get_size()[0], _rbfCoefficients->get_size()[1]}));
+  auto dOutput = gko::share(GinkgoVector::create(_deviceExecutor, gko::dim<2>{_rbfMatrixA->get_size()[0], _rbfCoefficients->get_size()[1]}));
   _allocCopyEvent.pause();
 
   //_matrixA->apply(gko::lend(_rbfCoefficients), gko::lend(dOutput));
