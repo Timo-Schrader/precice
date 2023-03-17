@@ -115,7 +115,7 @@ public:
   void clear();
 
   // Access to the evaluation matrix (output x input)
-  const std::shared_ptr<GinkgoMatrix> getEvaluationMatrix() const;
+  const std::shared_ptr<RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>> getEvaluationMatrix() const;
 
   std::shared_ptr<gko::Executor> getReferenceExecutor() const;
 
@@ -131,7 +131,7 @@ private:
   /// Evaluation matrix (output x input)
   std::shared_ptr<GinkgoMatrix> _matrixA;
 
-  std::unique_ptr<RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>> _rbfMatrixA;
+  std::shared_ptr<RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>> _rbfMatrixA;
 
   /// Polynomial matrix of the input mesh (for separate polynomial)
   std::shared_ptr<GinkgoMatrix> _matrixQ;
@@ -285,9 +285,9 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
   _deviceExecutor->synchronize();
 
   //_rbfSystemMatrix = gko::share(GinkgoMatrix::create(_deviceExecutor, gko::dim<2>{n, n}));
-  _matrixA = gko::share(GinkgoMatrix::create(_hostExecutor, gko::dim<2>{outputSize, n}));
+  //_matrixA = gko::share(GinkgoMatrix::create(_hostExecutor, gko::dim<2>{outputSize, n}));
 
-  _rbfMatrixA = RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, outputSize, n, dOutputVertices, dInputVertices, &basisFunction);
+  _rbfMatrixA = gko::share(RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, outputSize, n, dOutputVertices, dInputVertices, &basisFunction));
 
   _allocCopyEvent.pause();
 
@@ -335,13 +335,13 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
   //_deviceExecutor->synchronize();
   // systemMatrixAssemblyEvent.stop();
 
-  precice::utils::Event outputMatrixAssemblyEvent{"map.rbf.ginkgo.assembleOutputMatrix", false};
-  _deviceExecutor->run(make_rbf_fill_operation(_matrixA->get_size()[0], _matrixA->get_size()[1], meshDim, activeAxis, _matrixA->get_values(), dInputVertices->get_values(), dOutputVertices->get_values(), basisFunction, basisFunction.getFunctionParameters(), dInputVertices->get_size()[1], dOutputVertices->get_size()[1], Polynomial::ON == polynomial, polyparams));
+  // precice::utils::Event outputMatrixAssemblyEvent{"map.rbf.ginkgo.assembleOutputMatrix", false};
+  //_deviceExecutor->run(make_rbf_fill_operation(_matrixA->get_size()[0], _matrixA->get_size()[1], meshDim, activeAxis, _matrixA->get_values(), dInputVertices->get_values(), dOutputVertices->get_values(), basisFunction, basisFunction.getFunctionParameters(), dInputVertices->get_size()[1], dOutputVertices->get_size()[1], Polynomial::ON == polynomial, polyparams));
 
   // Wait for the kernels to finish
-  _deviceExecutor->synchronize();
-  outputMatrixAssemblyEvent.stop();
-  _assemblyEvent.stop();
+  //_deviceExecutor->synchronize();
+  // outputMatrixAssemblyEvent.stop();
+  //_assemblyEvent.stop();
 
   // dInputVertices->clear();
   // dOutputVertices->clear();
@@ -520,9 +520,9 @@ std::shared_ptr<gko::Executor> GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_
 }
 
 template <typename RADIAL_BASIS_FUNCTION_T>
-const std::shared_ptr<GinkgoMatrix> GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::getEvaluationMatrix() const
+const std::shared_ptr<RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>> GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::getEvaluationMatrix() const
 {
-  return _matrixA; // TODO: FIX
+  return _rbfMatrixA; // TODO: FIX
 }
 
 template <typename RADIAL_BASIS_FUNCTION_T>
