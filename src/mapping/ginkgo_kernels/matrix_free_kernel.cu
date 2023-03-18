@@ -12,30 +12,46 @@ __global__ void multiply_kernel_impl(std::size_t M, std::size_t N, ValueType *v1
 {
 
     __shared__ ValueType localB[DefaultBlockSize];
+    __shared__ ValueType prefetchedX;
+    __shared__ ValueType prefetchedSupportPoint[3]; // Unique per column. Can be shared across threads that work row-wise
+
+    ValueType prefetchedEvalPoint[3]; // Unique for every row, hence not shared
 
     auto i = blockIdx.x * blockDim.x + threadIdx.x;
     auto localIdx = i % DefaultBlockSize;
 
     if(i < M){
+
         ValueType dist = 0;
         ValueType y;
 
         localB[localIdx] = 0;
-
-        ValueType prefetchedEvalPoint[3];
 
         prefetchedEvalPoint[0] = v1[i];
         prefetchedEvalPoint[1] = v1[v1RowLength + i];
         prefetchedEvalPoint[2] = v1[2 * v1RowLength + i];
 
         for(size_t j = 0; j < v2RowLength; ++j){
+
+            if(0 == threadIdx.x){
+                prefetchedX = x[j];
+
+                prefetchedSupportPoint[0] = v2[j];
+                prefetchedSupportPoint[1] = v2[v2RowLength + j];
+                prefetchedSupportPoint[2] = v2[2 * v2RowLength + j];
+            }
+
+            __syncthreads();
+
             dist = 0;
             for (size_t k = 0; k < 3; ++k) {
-                y    = prefetchedEvalPoint[k] - v2[k * v2RowLength + j];
+                y    = prefetchedEvalPoint[k] - prefetchedSupportPoint[k];
                 dist = fma(y, y, dist);
             }
 
-            localB[localIdx] +=  f(sqrt(dist), params) * x[j];
+            localB[localIdx] +=  f(sqrt(dist), params) * prefetchedX;
+
+            __syncthreads();
         }
 
         b[i] = localB[localIdx];
