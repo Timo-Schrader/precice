@@ -20,10 +20,11 @@ __global__ void multiply_kernel_impl(std::size_t M, std::size_t N, ValueType *v1
     auto i = blockIdx.x * blockDim.x + threadIdx.x;
     auto localIdx = i % DefaultBlockSize;
 
-    if(i < M){
+    ValueType dist = 0;
+    ValueType y;
 
-        ValueType dist = 0;
-        ValueType y;
+    // All blocks except for the last one can use barriers. The last block needs to disable some threads, hence no barrier is allowed here
+    if(blockIdx.x < blockDim.x - 1){
 
         localB[localIdx] = 0;
 
@@ -55,6 +56,27 @@ __global__ void multiply_kernel_impl(std::size_t M, std::size_t N, ValueType *v1
         }
 
         b[i] = localB[localIdx];
+    }
+    else{
+        if(i < M){
+            localB[localIdx] = 0;
+
+            prefetchedEvalPoint[0] = v1[i];
+            prefetchedEvalPoint[1] = v1[v1RowLength + i];
+            prefetchedEvalPoint[2] = v1[2 * v1RowLength + i];
+
+            for(size_t j = 0; j < v2RowLength; ++j){
+                dist = 0;
+                for (size_t k = 0; k < 3; ++k) {
+                    y    = prefetchedEvalPoint[k] - v2[k * v2RowLength + j];
+                    dist = fma(y, y, dist);
+                }
+
+                localB[localIdx] +=  f(sqrt(dist), params) * x[j];
+            }
+
+            b[i] = localB[localIdx];
+        }
     }
 }
 
