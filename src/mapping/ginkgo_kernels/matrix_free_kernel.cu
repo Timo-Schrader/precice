@@ -4,6 +4,8 @@
 
 #include "mapping/impl/BasisFunctions.hpp"
 
+#define MAX_NUM_PREFETCH_ELEMENTS 1000
+
 using precice::mapping::RadialBasisParameters;
 
 template <typename ValueType, typename EvalFunctionType, unsigned int DefaultBlockSize>
@@ -12,8 +14,7 @@ __global__ void multiply_kernel_impl(std::size_t M, std::size_t N, ValueType *v1
 {
 
     __shared__ ValueType localB[DefaultBlockSize];
-    __shared__ ValueType prefetchedX;
-    __shared__ ValueType prefetchedSupportPoint[3]; // Unique per column. Can be shared across threads that work row-wise
+    __shared__ ValueType prefetchMemoryBuffer[MAX_NUM_PREFETCH_ELEMENTS + 3 * MAX_NUM_PREFETCH_ELEMENTS];// N + 3 * v2RowLength: N values of x, 3 * v2RowLength output vertex coordinates
 
     ValueType prefetchedEvalPoint[3]; // Unique for every row, hence not shared
 
@@ -34,25 +35,30 @@ __global__ void multiply_kernel_impl(std::size_t M, std::size_t N, ValueType *v1
 
         for(size_t j = 0; j < v2RowLength; ++j){
 
-            if(0 == threadIdx.x){
-                prefetchedX = x[j];
+            size_t localJ = j % MAX_NUM_PREFETCH_ELEMENTS;
 
-                prefetchedSupportPoint[0] = v2[j];
-                prefetchedSupportPoint[1] = v2[v2RowLength + j];
-                prefetchedSupportPoint[2] = v2[2 * v2RowLength + j];
+            // Prefetch after every 1000 elements
+            if(0 == localJ){
+                if(0 == threadIdx.x){
+                    // Check if amount of remaining elements is less than maximum number of prefetchable
+                    for(size_t k = 0; k < min((uint)(v2RowLength - j), (uint)(MAX_NUM_PREFETCH_ELEMENTS)); ++k){
+                        prefetchMemoryBuffer[k] = x[j + k];
+
+                        prefetchMemoryBuffer[MAX_NUM_PREFETCH_ELEMENTS + 3 * k] = v2[j + k];
+                        prefetchMemoryBuffer[MAX_NUM_PREFETCH_ELEMENTS + 3 * k + 1] = v2[v2RowLength + j + k];
+                        prefetchMemoryBuffer[MAX_NUM_PREFETCH_ELEMENTS + 3 * k + 2] = v2[2 * v2RowLength + j + k];
+                    }
+                }
+                __syncthreads();
             }
-
-            __syncthreads();
 
             dist = 0;
             for (size_t k = 0; k < 3; ++k) {
-                y    = prefetchedEvalPoint[k] - prefetchedSupportPoint[k];
+                y    = prefetchedEvalPoint[k] - prefetchMemoryBuffer[MAX_NUM_PREFETCH_ELEMENTS + 3 * localJ + k];
                 dist = fma(y, y, dist);
             }
 
-            localB[localIdx] +=  f(sqrt(dist), params) * prefetchedX;
-
-            __syncthreads();
+            localB[localIdx] +=  f(sqrt(dist), params) * prefetchMemoryBuffer[localJ];
         }
 
         b[i] = localB[localIdx];

@@ -390,7 +390,7 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
                                ->generate(RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, n, dInputVertices, dInputVertices, &basisFunction)));
 
     //_cgSolver = gko::share(solverFactory->generate(rbfSys));
-    //_cgSolver->add_logger(_logger);
+    _cgSolver->add_logger(_logger);
     //}
   } else if (_solverType == GinkgoSolverType::GMRES) {
 
@@ -417,7 +417,7 @@ GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::GinkgoRadialBasisFctSolver(
                              .on(_deviceExecutor);
 
     _gmresSolver = gko::share(solverFactory->generate(RBFMatrix<double, RADIAL_BASIS_FUNCTION_T>::create(_deviceExecutor, n, n, dInputVertices, dInputVertices, &basisFunction)));
-    //_gmresSolver->add_logger(_logger);
+    _gmresSolver->add_logger(_logger);
     //}
   }
 }
@@ -434,7 +434,7 @@ void GinkgoRadialBasisFctSolver<RADIAL_BASIS_FUNCTION_T>::_solveRBFSystem(const 
     _mgSolver->apply(gko::lend(rhs), gko::lend(_rbfCoefficients));
   }
   solverEvent.stop();
-  // PRECICE_INFO("The iterative solver stopped after {} iterations.", _logger->get_num_iterations());
+  PRECICE_INFO("The iterative solver stopped after {} iterations.", _logger->get_num_iterations());
 
 // Only compute time-consuming statistics in debug mode
 #ifndef NDEBUG
