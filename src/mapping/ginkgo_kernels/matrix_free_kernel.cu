@@ -12,30 +12,40 @@ __global__ void multiply_kernel_impl(std::size_t M, std::size_t N, ValueType *v1
 {
 
     __shared__ ValueType localB[DefaultBlockSize];
+    ValueType prefetchedEvalPoint[3];
 
     auto i = blockIdx.x * blockDim.x + threadIdx.x;
     auto localIdx = i % DefaultBlockSize;
 
+    ValueType dist = 0;
+    ValueType y;
+    ValueType rbfEval;
+
     if(i < M){
-        ValueType dist = 0;
-        ValueType y;
 
         localB[localIdx] = 0;
-
-        ValueType prefetchedEvalPoint[3];
 
         prefetchedEvalPoint[0] = v1[i];
         prefetchedEvalPoint[1] = v1[v1RowLength + i];
         prefetchedEvalPoint[2] = v1[2 * v1RowLength + i];
 
         for(size_t j = 0; j < v2RowLength; ++j){
+
+            if(0 == x[j]){
+                continue;
+            }
+
             dist = 0;
             for (size_t k = 0; k < 3; ++k) {
                 y    = prefetchedEvalPoint[k] - v2[k * v2RowLength + j];
                 dist = fma(y, y, dist);
             }
 
-            localB[localIdx] +=  f(sqrt(dist), params) * x[j];
+            rbfEval = f(sqrt(dist), params);
+
+            if(0 != rbfEval){
+                localB[localIdx] = fma(rbfEval, x[j], localB[localIdx]);
+            }
         }
 
         b[i] = localB[localIdx];
