@@ -6,25 +6,19 @@
 
 using precice::mapping::RadialBasisParameters;
 
-template <typename ValueType, typename EvalFunctionType, unsigned int DefaultBlockSize>
+template <typename ValueType, typename EvalFunctionType>
 __global__ void multiply_kernel_impl(std::size_t M, std::size_t N, ValueType *v1,  ValueType *v2,
                                     ValueType* x, ValueType *b, EvalFunctionType f, RadialBasisParameters params,  size_t v1RowLength,  size_t v2RowLength)
 {
-
-    __shared__ ValueType localB[DefaultBlockSize];
-    ValueType prefetchedEvalPoint[3];
-
     auto i = blockIdx.x * blockDim.x + threadIdx.x;
-    auto localIdx = i % DefaultBlockSize;
+    ValueType localB = 0;
 
     ValueType dist = 0;
     ValueType y;
-    ValueType rbfEval;
+
+    ValueType prefetchedEvalPoint[3];
 
     if(i < M){
-
-        localB[localIdx] = 0;
-
         prefetchedEvalPoint[0] = v1[i];
         prefetchedEvalPoint[1] = v1[v1RowLength + i];
         prefetchedEvalPoint[2] = v1[2 * v1RowLength + i];
@@ -34,21 +28,16 @@ __global__ void multiply_kernel_impl(std::size_t M, std::size_t N, ValueType *v1
             if(0 == x[j]){
                 continue;
             }
-
             dist = 0;
             for (size_t k = 0; k < 3; ++k) {
                 y    = prefetchedEvalPoint[k] - v2[k * v2RowLength + j];
                 dist = fma(y, y, dist);
             }
 
-            rbfEval = f(sqrt(dist), params);
-
-            if(0 != rbfEval){
-                localB[localIdx] = fma(rbfEval, x[j], localB[localIdx]);
-            }
+            localB =  fma(f(sqrt(dist), params), x[j], localB);
         }
 
-        b[i] = localB[localIdx];
+        b[i] = localB;
     }
 }
 
@@ -58,7 +47,7 @@ void multiply_kernel(std::size_t M, std::size_t N,  ValueType *v1,  ValueType *v
 {
     constexpr unsigned int blockSize = 512;
     auto gridSize = (M + blockSize - 1) / blockSize;
-    multiply_kernel_impl<ValueType, EvalFunctionType, blockSize><<<gridSize, blockSize>>>(M, N, v1, v2, x, b, f, params, v1RowLength, v2RowLength);
+    multiply_kernel_impl<ValueType, EvalFunctionType><<<gridSize, blockSize>>>(M, N, v1, v2, x, b, f, params, v1RowLength, v2RowLength);
 }
 
 
