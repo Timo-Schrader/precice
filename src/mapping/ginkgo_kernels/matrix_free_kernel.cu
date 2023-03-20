@@ -25,9 +25,6 @@ __global__ void multiply_kernel_impl(std::size_t M, std::size_t N, ValueType *v1
 
         for(size_t j = 0; j < v2RowLength; ++j){
 
-            if(0 == x[j]){
-                continue;
-            }
             dist = 0;
             for (size_t k = 0; k < 3; ++k) {
                 y    = prefetchedEvalPoint[k] - v2[k * v2RowLength + j];
